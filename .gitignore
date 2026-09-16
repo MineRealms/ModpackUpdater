@@ -1,0 +1,11 @@
+# 构建产物
+build/
+.gradle/
+dist/
+mac-package/
+*.zip
+
+# IDE
+.idea/
+*.iml
+.vscode/
