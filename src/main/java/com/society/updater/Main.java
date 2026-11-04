@@ -220,6 +220,11 @@ public class Main {
             }
             String version = firstNonBlank(value(arguments, "--version"), Updater.autoVersion());
             String side = value(arguments, "--side");
+            int releaseAssetLimit = 900;
+            String releaseAssetLimitValue = value(arguments, "--release-asset-limit");
+            if (releaseAssetLimitValue != null && !releaseAssetLimitValue.isBlank()) {
+                releaseAssetLimit = Math.max(100, Math.min(990, Integer.parseInt(releaseAssetLimitValue.trim())));
+            }
             long maxFileBytes = 0L;
             String maxFileMb = value(arguments, "--max-file-mb");
             if (maxFileMb != null && !maxFileMb.isBlank()) {
@@ -240,7 +245,7 @@ public class Main {
             if ("pixeldrain".equalsIgnoreCase(backend)) {
                 manifest = updater.uploadAndGenerate(source, apiKey, value(arguments, "--name"), version, side, previous, cliListener());
             } else {
-                manifest = updater.uploadReleaseAndGenerate(source, token, repo, tag, value(arguments, "--name"), "", side, previous, cliListener(), maxFileBytes);
+                manifest = updater.uploadReleaseAndGenerate(source, token, repo, tag, value(arguments, "--name"), "", side, previous, cliListener(), maxFileBytes, releaseAssetLimit);
             }
             manifest.version = version;
             updater.writeManifest(manifest, manifestPath);

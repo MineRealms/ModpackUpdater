@@ -278,8 +278,70 @@ public class Updater {
     }
 
     public Manifest uploadReleaseAndGenerate(Path source, String token, String repo, String tag, String releaseName, String changelog, String side, Manifest previous, ProgressListener listener, long maxFileBytes) throws Exception {
+        return uploadReleaseAndGenerate(source, token, repo, tag, releaseName, changelog, side, previous, listener, maxFileBytes, 900);
+    }
+
+    public Manifest uploadReleaseAndGenerate(Path source, String token, String repo, String tag, String releaseName, String changelog, String side, Manifest previous, ProgressListener listener, long maxFileBytes, int releaseAssetLimit) throws Exception {
         List<ManifestFile> files = generateManifest(source, releaseName, tag, side).files;
-        return uploadReleaseAndGenerate(source, token, repo, tag, releaseName, changelog, side, previous, files, List.of(), true, listener, maxFileBytes);
+        return uploadReleaseAndGenerateSharded(source, token, repo, tag, releaseName, changelog, side, previous, files, List.of(), true, listener, maxFileBytes, releaseAssetLimit);
+    }
+
+    private Manifest uploadReleaseAndGenerateSharded(Path source, String token, String repo, String baseTag, String releaseName, String changelog, String side, Manifest previous, List<ManifestFile> desiredFiles, List<String> desiredDeletes, boolean autoDeleteMissing, ProgressListener listener, long maxFileBytes, int releaseAssetLimit) throws Exception {
+        GitHub github = new GitHub();
+        Manifest manifest = new Manifest();
+        manifest.version = baseTag == null ? "" : baseTag;
+        manifest.name = releaseName == null ? "" : releaseName;
+        manifest.files = new ArrayList<>();
+        for (ManifestFile file : desiredFiles == null ? List.<ManifestFile>of() : desiredFiles) {
+            if (file != null && file.path != null && !file.path.isBlank()) manifest.files.add(file);
+        }
+        Map<String, ManifestFile> previousByPath = new LinkedHashMap<>();
+        Map<String, String> deleteEntries = new LinkedHashMap<>();
+        if (previous != null) {
+            if (previous.files != null) for (ManifestFile file : previous.files) if (file != null && file.path != null && !file.path.isBlank()) previousByPath.put(normalizeKey(file.path), file);
+            if (previous.delete != null) for (String path : previous.delete) if (path != null && !path.isBlank()) deleteEntries.put(normalizeKey(path), path);
+        }
+        if (desiredDeletes != null) for (String path : desiredDeletes) if (path != null && !path.isBlank()) deleteEntries.put(normalizeKey(path), path);
+        Map<String, String> assetNames = buildAssetNames(manifest);
+        Set<String> currentPaths = new LinkedHashSet<>();
+        record ReleaseShard(String tag, long id, Map<String, JsonObject> assets) {}
+        List<ReleaseShard> shards = new ArrayList<>();
+        int uploaded = 0, reused = 0, index = 0;
+        for (ManifestFile file : manifest.files) {
+            index++;
+            currentPaths.add(normalizeKey(file.path));
+            ManifestFile old = previousByPath.get(normalizeKey(file.path));
+            if (old != null && old.url != null && !old.url.isBlank() && old.sha256 != null && file.sha256 != null && old.sha256.equalsIgnoreCase(file.sha256)) {
+                file.url = old.url; reused++; continue;
+            }
+            if (maxFileBytes > 0 && file.size > maxFileBytes) {
+                if (old != null && old.url != null && !old.url.isBlank()) { file.url=old.url; file.sha256=old.sha256; file.size=old.size; reused++; }
+                continue;
+            }
+            if (file.size <= 0) continue;
+            ReleaseShard shard = null;
+            for (ReleaseShard candidate : shards) if (candidate.assets().size() < releaseAssetLimit) { shard=candidate; break; }
+            if (shard == null) {
+                int number=shards.size()+1;
+                String shardTag=number==1?baseTag:baseTag+"-"+number;
+                JsonObject release=github.getOrCreateRelease(token, repo, shardTag, (releaseName==null||releaseName.isBlank()?shardTag:releaseName+" (part "+number+")"), changelog);
+                shard=new ReleaseShard(shardTag,release.get("id").getAsLong(),github.listAssets(token,repo,release.get("id").getAsLong()));
+                shards.add(shard); listener.onLog("Release 分片 "+number+": "+shardTag+" 现有附件 "+shard.assets().size());
+            }
+            String assetName=assetNames.get(file.path);
+            JsonObject existing=shard.assets().get(assetName);
+            if (existing != null) github.deleteAsset(token,repo,existing.get("id").getAsLong());
+            listener.onFile(file.path,index,manifest.files.size());
+            Path local=source.toAbsolutePath().normalize().resolve(file.path.replace('/',java.io.File.separatorChar));
+            JsonObject asset=github.uploadAsset(token,repo,shard.id(),assetName,local);
+            file.url=asset.get("browser_download_url").getAsString(); shard.assets().put(assetName,asset); uploaded++;
+        }
+        manifest.files.removeIf(file -> file.url == null || file.url.isBlank());
+        deleteEntries.keySet().removeAll(currentPaths);
+        if (autoDeleteMissing) for (ManifestFile old : previousByPath.values()) if (old.path != null && !currentPaths.contains(normalizeKey(old.path))) deleteEntries.put(normalizeKey(old.path),old.path);
+        manifest.delete=new ArrayList<>(deleteEntries.values());
+        listener.onLog("分片发布完成: "+shards.size()+" 个 Release, 上传 "+uploaded+", 复用 "+reused+", 清单文件 "+manifest.files.size()+", 删除 "+manifest.delete.size());
+        return manifest;
     }
 
     public Manifest uploadReleaseAndGenerate(Path source, String token, String repo, String tag, String releaseName, String changelog, String side, Manifest previous, List<ManifestFile> desiredFiles, List<String> desiredDeletes, boolean autoDeleteMissing, ProgressListener listener) throws Exception {
