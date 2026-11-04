@@ -321,12 +321,21 @@ public class Updater {
             if (file.size <= 0) continue;
             ReleaseShard shard = null;
             for (ReleaseShard candidate : shards) if (candidate.assets().size() < releaseAssetLimit) { shard=candidate; break; }
-            if (shard == null) {
-                int number=shards.size()+1;
-                String shardTag=number==1?baseTag:baseTag+"-"+number;
-                JsonObject release=github.getOrCreateRelease(token, repo, shardTag, (releaseName==null||releaseName.isBlank()?shardTag:releaseName+" (part "+number+")"), changelog);
-                shard=new ReleaseShard(shardTag,release.get("id").getAsLong(),github.listAssets(token,repo,release.get("id").getAsLong()));
-                shards.add(shard); listener.onLog("Release 分片 "+number+": "+shardTag+" 现有附件 "+shard.assets().size());
+            while (shard == null) {
+                int number = shards.size() + 1;
+                String shardTag = number == 1 ? baseTag : baseTag + "-" + number;
+                JsonObject release = github.getOrCreateRelease(token, repo, shardTag,
+                        releaseName == null || releaseName.isBlank() ? shardTag : releaseName + " (part " + number + ")",
+                        changelog);
+                ReleaseShard candidate = new ReleaseShard(shardTag, release.get("id").getAsLong(),
+                        github.listAssets(token, repo, release.get("id").getAsLong()));
+                shards.add(candidate);
+                listener.onLog("Release 分片 " + number + ": " + shardTag + " 现有附件 " + candidate.assets().size());
+                if (candidate.assets().size() < releaseAssetLimit) {
+                    shard = candidate;
+                } else {
+                    listener.onLog("Release 分片已满，继续下一分片: " + shardTag);
+                }
             }
             String assetName=assetNames.get(file.path);
             JsonObject existing=shard.assets().get(assetName);
