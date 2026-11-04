@@ -160,27 +160,38 @@ public class Updater {
 
     public Manifest generateManifest(Path source, String name, String version, String side) throws IOException {
         Path root = source.toAbsolutePath().normalize();
+        long started = System.currentTimeMillis();
+        Log.info("扫描清单目录: " + root);
         Manifest manifest = new Manifest();
         manifest.name = name == null || name.isBlank() ? root.getFileName().toString() : name;
         manifest.version = version == null ? "" : version;
         manifest.files = new ArrayList<>();
+        int skippedEmpty = 0;
         try (var stream = Files.walk(root)) {
-            stream.filter(Files::isRegularFile)
-                    .filter(path -> !isSkipped(root.relativize(path).toString()))
-                    .sorted()
-                    .forEach(path -> {
-                        try {
-                            ManifestFile file = new ManifestFile();
-                            file.path = root.relativize(path).toString().replace('\\', '/');
-                            file.size = Files.size(path);
-                            file.sha256 = HashUtil.sha256(path);
-                            file.side = side == null || side.isBlank() ? "both" : side;
-                            manifest.files.add(file);
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
-                        }
-                    });
+            var paths = stream.filter(Files::isRegularFile).sorted().toList();
+            for (Path path : paths) {
+                try {
+                    String relative = root.relativize(path).toString();
+                    if (isSkipped(relative)) continue;
+                    long size = Files.size(path);
+                    if (size <= 0) {
+                        skippedEmpty++;
+                        Log.info("跳过空文件: " + relative);
+                        continue;
+                    }
+                    ManifestFile file = new ManifestFile();
+                    file.path = relative.replace('\\', '/');
+                    file.size = size;
+                    file.sha256 = HashUtil.sha256(path);
+                    file.side = side == null || side.isBlank() ? "both" : side;
+                    manifest.files.add(file);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
         }
+        Log.info("清单扫描完成: " + manifest.files.size() + " 个文件, 跳过空文件 " + skippedEmpty
+                + ", 耗时 " + (System.currentTimeMillis() - started) + " ms");
         return manifest;
     }
 
@@ -263,11 +274,19 @@ public class Updater {
     }
 
     public Manifest uploadReleaseAndGenerate(Path source, String token, String repo, String tag, String releaseName, String changelog, String side, Manifest previous, ProgressListener listener) throws Exception {
+        return uploadReleaseAndGenerate(source, token, repo, tag, releaseName, changelog, side, previous, listener, 0L);
+    }
+
+    public Manifest uploadReleaseAndGenerate(Path source, String token, String repo, String tag, String releaseName, String changelog, String side, Manifest previous, ProgressListener listener, long maxFileBytes) throws Exception {
         List<ManifestFile> files = generateManifest(source, releaseName, tag, side).files;
-        return uploadReleaseAndGenerate(source, token, repo, tag, releaseName, changelog, side, previous, files, List.of(), true, listener);
+        return uploadReleaseAndGenerate(source, token, repo, tag, releaseName, changelog, side, previous, files, List.of(), true, listener, maxFileBytes);
     }
 
     public Manifest uploadReleaseAndGenerate(Path source, String token, String repo, String tag, String releaseName, String changelog, String side, Manifest previous, List<ManifestFile> desiredFiles, List<String> desiredDeletes, boolean autoDeleteMissing, ProgressListener listener) throws Exception {
+        return uploadReleaseAndGenerate(source, token, repo, tag, releaseName, changelog, side, previous, desiredFiles, desiredDeletes, autoDeleteMissing, listener, 0L);
+    }
+
+    public Manifest uploadReleaseAndGenerate(Path source, String token, String repo, String tag, String releaseName, String changelog, String side, Manifest previous, List<ManifestFile> desiredFiles, List<String> desiredDeletes, boolean autoDeleteMissing, ProgressListener listener, long maxFileBytes) throws Exception {
         GitHub github = new GitHub();
         Manifest manifest = new Manifest();
         manifest.version = tag == null ? "" : tag;
@@ -326,6 +345,21 @@ public class Updater {
                 listener.onLog("未变化: " + file.path);
                 continue;
             }
+            if (maxFileBytes > 0 && file.size > maxFileBytes) {
+                if (old != null && old.url != null && !old.url.isBlank() && assets.containsKey(assetName)) {
+                    file.url = old.url;
+                    file.sha256 = old.sha256;
+                    file.size = old.size;
+                    Log.info("跳过大文件，保留旧版本: " + file.path + " (" + file.size + " bytes)");
+                } else {
+                    Log.info("跳过大文件，暂无旧版本可复用: " + file.path + " (" + file.size + " bytes)");
+                }
+                continue;
+            }
+            if (file.size <= 0) {
+                Log.info("跳过空文件(无法上传 GitHub): " + file.path);
+                continue;
+            }
             JsonObject existing = assets.get(assetName);
             if (existing != null && old == null && existing.has("size") && existing.get("size").getAsLong() == file.size) {
                 file.url = existing.get("browser_download_url").getAsString();
@@ -333,6 +367,8 @@ public class Updater {
                 continue;
             }
             listener.onFile(file.path, index, manifest.files.size());
+            Log.info("[" + index + "/" + manifest.files.size() + "] 上传 " + file.path + " (" + file.size + " bytes)");
+            long uploadStarted = System.currentTimeMillis();
             if (existing != null) {
                 github.deleteAsset(token, repo, existing.get("id").getAsLong());
                 listener.onLog("删除旧附件: " + assetName);
@@ -342,6 +378,10 @@ public class Updater {
             file.url = asset.get("browser_download_url").getAsString();
             uploaded++;
             listener.onLog("已上传: " + file.path + " -> " + file.url);
+            Log.info("上传完成 " + file.path + " 耗时 " + (System.currentTimeMillis() - uploadStarted) + " ms");
+        }
+        if (maxFileBytes > 0) {
+            manifest.files.removeIf(file -> file.url == null || file.url.isBlank());
         }
         deleteEntries.keySet().removeAll(currentPaths);
         if (autoDeleteMissing) {

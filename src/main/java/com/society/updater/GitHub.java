@@ -156,8 +156,10 @@ public class GitHub {
                 .build();
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() == 422 && response.body().contains("already_exists")) {
+            Log.info("附件已存在，查找并替换: " + assetName);
             JsonObject conflicting = findAsset(token, repo, releaseId, assetName);
             if (conflicting != null) {
+                Log.info("删除冲突附件: " + conflicting.get("name").getAsString());
                 deleteAsset(token, repo, conflicting.get("id").getAsLong());
                 response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             }
@@ -174,7 +176,24 @@ public class GitHub {
         if (existing != null) {
             return existing;
         }
-        return assets.get(assetName.replace(' ', '.'));
+        existing = assets.get(assetName.replace(' ', '.'));
+        if (existing != null) {
+            return existing;
+        }
+        // GitHub asset names have been observed with different space/dot mangling
+        // across runs and locales. Fall back to a stable alphanumeric key.
+        String wanted = normalizeAssetName(assetName);
+        for (Map.Entry<String, JsonObject> entry : assets.entrySet()) {
+            if (normalizeAssetName(entry.getKey()).equals(wanted)) {
+                return entry.getValue();
+            }
+        }
+        Log.warn("未在 Release 中找到同名附件: " + assetName + " (现有 " + assets.size() + " 个)");
+        return null;
+    }
+
+    private static String normalizeAssetName(String name) {
+        return name == null ? "" : name.replaceAll("[^A-Za-z0-9]", "").toLowerCase(java.util.Locale.ROOT);
     }
 
     public void deleteAsset(String token, String repo, long assetId) throws IOException, InterruptedException {

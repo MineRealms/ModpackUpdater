@@ -34,6 +34,15 @@ public class Main {
             runCli(arguments);
         } catch (Throwable t) {
             Log.error("未处理异常", t);
+            boolean cli = args.length > 0
+                    && !Arrays.asList(args).contains("--gui")
+                    && !Arrays.asList(args).contains("--client");
+            if (cli) {
+                // A CLI run must never block on a Swing error dialog; the caller needs the stack trace.
+                t.printStackTrace(System.err);
+                System.out.flush();
+                System.exit(1);
+            }
             showFatal(t);
         }
     }
@@ -211,6 +220,15 @@ public class Main {
             }
             String version = firstNonBlank(value(arguments, "--version"), Updater.autoVersion());
             String side = value(arguments, "--side");
+            long maxFileBytes = 0L;
+            String maxFileMb = value(arguments, "--max-file-mb");
+            if (maxFileMb != null && !maxFileMb.isBlank()) {
+                try {
+                    maxFileBytes = Math.max(0L, Long.parseLong(maxFileMb.trim())) * 1024L * 1024L;
+                } catch (NumberFormatException ignored) {
+                    throw new IllegalArgumentException("--max-file-mb 需要整数 MB");
+                }
+            }
             Path manifestPath = Path.of(localManifest);
             Updater updater = new Updater(apiKey);
             Manifest previous = null;
@@ -222,7 +240,7 @@ public class Main {
             if ("pixeldrain".equalsIgnoreCase(backend)) {
                 manifest = updater.uploadAndGenerate(source, apiKey, value(arguments, "--name"), version, side, previous, cliListener());
             } else {
-                manifest = updater.uploadReleaseAndGenerate(source, token, repo, tag, value(arguments, "--name"), "", side, previous, cliListener());
+                manifest = updater.uploadReleaseAndGenerate(source, token, repo, tag, value(arguments, "--name"), "", side, previous, cliListener(), maxFileBytes);
             }
             manifest.version = version;
             updater.writeManifest(manifest, manifestPath);
