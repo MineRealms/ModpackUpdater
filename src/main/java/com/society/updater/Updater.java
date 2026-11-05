@@ -320,7 +320,16 @@ public class Updater {
             }
             if (file.size <= 0) continue;
             ReleaseShard shard = null;
-            for (ReleaseShard candidate : shards) if (candidate.assets().size() < releaseAssetLimit) { shard=candidate; break; }
+            String oldTag = releaseTag(old == null ? null : old.url);
+            if (oldTag != null) {
+                for (ReleaseShard candidate : shards) if (candidate.tag().equals(oldTag)) { shard = candidate; break; }
+                if (shard == null) {
+                    JsonObject oldRelease = github.getOrCreateRelease(token, repo, oldTag, oldTag, changelog);
+                    shard = new ReleaseShard(oldTag, oldRelease.get("id").getAsLong(), github.listAssets(token, repo, oldRelease.get("id").getAsLong()));
+                    shards.add(shard);
+                }
+            }
+            for (ReleaseShard candidate : shards) if (shard == null && candidate.assets().size() < releaseAssetLimit) { shard=candidate; break; }
             while (shard == null) {
                 int number = shards.size() + 1;
                 String shardTag = number == 1 ? baseTag : baseTag + "-" + number;
@@ -477,6 +486,16 @@ public class Updater {
         manifest.delete = new ArrayList<>(deleteEntries.values());
         listener.onLog("本次上传 " + uploaded + " 个文件，复用 " + (manifest.files.size() - uploaded) + " 个，待删除 " + manifest.delete.size() + " 项");
         return manifest;
+    }
+
+    private static String releaseTag(String url) {
+        if (url == null || url.isBlank()) return null;
+        String marker = "/releases/download/";
+        int start = url.indexOf(marker);
+        if (start < 0) return null;
+        start += marker.length();
+        int end = url.indexOf('/', start);
+        return end > start ? url.substring(start, end) : null;
     }
 
     private static Map<String, String> buildAssetNames(Manifest manifest) {
