@@ -210,6 +210,7 @@ public class Updater {
         manifest.version = version == null ? "" : version;
         manifest.name = name == null ? "" : name;
         manifest.files = new ArrayList<>();
+        manifest.ignore = inheritedIgnore(previous);
         if (desiredFiles != null) {
             for (ManifestFile file : desiredFiles) {
                 if (file != null && file.path != null && !file.path.isBlank()) {
@@ -296,6 +297,7 @@ public class Updater {
         manifest.version = baseTag == null ? "" : baseTag;
         manifest.name = releaseName == null ? "" : releaseName;
         manifest.files = new ArrayList<>();
+        manifest.ignore = inheritedIgnore(previous);
         for (ManifestFile file : desiredFiles == null ? List.<ManifestFile>of() : desiredFiles) {
             if (file != null && file.path != null && !file.path.isBlank()) manifest.files.add(file);
         }
@@ -376,6 +378,7 @@ public class Updater {
         manifest.version = tag == null ? "" : tag;
         manifest.name = releaseName == null ? "" : releaseName;
         manifest.files = new ArrayList<>();
+        manifest.ignore = inheritedIgnore(previous);
         if (desiredFiles != null) {
             for (ManifestFile file : desiredFiles) {
                 if (file != null && file.path != null && !file.path.isBlank()) {
@@ -652,6 +655,13 @@ public class Updater {
             }
         }
         return path.matches(regex.toString());
+    }
+
+    private static List<String> inheritedIgnore(Manifest previous) {
+        if (previous == null || previous.ignore == null) {
+            return new ArrayList<>();
+        }
+        return new ArrayList<>(previous.ignore);
     }
 
     private static String normalizeKey(String path) {
