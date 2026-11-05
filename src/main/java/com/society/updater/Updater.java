@@ -286,6 +286,10 @@ public class Updater {
         return uploadReleaseAndGenerateSharded(source, token, repo, tag, releaseName, changelog, side, previous, files, List.of(), true, listener, maxFileBytes, releaseAssetLimit);
     }
 
+    public Manifest uploadReleaseAndGenerateTargeted(Path source, String token, String repo, String baseTag, String releaseName, String changelog, String side, Manifest previous, List<ManifestFile> desiredFiles, List<String> desiredDeletes, boolean autoDeleteMissing, ProgressListener listener, long maxFileBytes, int releaseAssetLimit) throws Exception {
+        return uploadReleaseAndGenerateSharded(source, token, repo, baseTag, releaseName, changelog, side, previous, desiredFiles, desiredDeletes, autoDeleteMissing, listener, maxFileBytes, releaseAssetLimit);
+    }
+
     private Manifest uploadReleaseAndGenerateSharded(Path source, String token, String repo, String baseTag, String releaseName, String changelog, String side, Manifest previous, List<ManifestFile> desiredFiles, List<String> desiredDeletes, boolean autoDeleteMissing, ProgressListener listener, long maxFileBytes, int releaseAssetLimit) throws Exception {
         GitHub github = new GitHub();
         Manifest manifest = new Manifest();
